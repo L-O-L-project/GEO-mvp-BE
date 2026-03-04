@@ -6,6 +6,7 @@ import os
 import secrets
 import time
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 from typing import Any, Dict
@@ -40,17 +41,18 @@ AUTH_STORE_PATH = Path("out/auth-profiles.json")
 
 logger = logging.getLogger(APP_NAME)
 
-app = FastAPI(title=APP_NAME, version="0.1.0")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    migrate()
+    yield
+
+
+app = FastAPI(title=APP_NAME, version="0.1.0", lifespan=_lifespan)
 
 native_analysis_store: Dict[str, Dict[str, Any]] = {}
 execute_jobs: Dict[str, Dict[str, Any]] = {}
 Path("out").mkdir(parents=True, exist_ok=True)
 app.mount("/out", StaticFiles(directory="out"), name="out")
-
-
-@app.on_event("startup")
-def _startup() -> None:
-    migrate()
 
 
 @app.middleware("http")
@@ -61,16 +63,25 @@ async def _catch_unhandled_errors(request: Request, call_next):
         raise
     except Exception as e:
         logger.exception("unhandled error: %s %s", request.method, request.url.path)
-        raise HTTPException(status_code=500, detail={"ok": False, "error": str(e)}) from e
+        raise HTTPException(
+            status_code=500,
+            detail=_error_detail("server", "UNHANDLED_EXCEPTION", "서버 내부 오류가 발생했습니다.", str(e)),
+        ) from e
 
 
 async def _json_payload(req: Request) -> Dict[str, Any]:
     try:
         data = await req.json()
     except Exception as e:
-        raise HTTPException(status_code=400, detail={"ok": False, "error": "invalid JSON body"}) from e
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail("config", "INVALID_JSON", "요청 본문(JSON) 형식이 올바르지 않습니다.", str(e)),
+        ) from e
     if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"ok": False, "error": "JSON object body required"})
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail("config", "JSON_OBJECT_REQUIRED", "JSON 객체 형태의 본문이 필요합니다."),
+        )
     return data
 
 allow_origins = ["*"] if WEB_ORIGIN == "*" else [WEB_ORIGIN]
@@ -183,7 +194,10 @@ async def proxy_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SEC) as client:
             resp = await client.post(url, json=payload)
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"upstream unavailable: {e}") from e
+        raise HTTPException(
+            status_code=502,
+            detail=_error_detail("network", "UPSTREAM_UNAVAILABLE", "상위 서비스 연결에 실패했습니다.", str(e)),
+        ) from e
 
     if resp.status_code >= 400:
         detail: Any
@@ -202,7 +216,10 @@ async def proxy_get(path: str) -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SEC) as client:
             resp = await client.get(url)
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"upstream unavailable: {e}") from e
+        raise HTTPException(
+            status_code=502,
+            detail=_error_detail("network", "UPSTREAM_UNAVAILABLE", "상위 서비스 연결에 실패했습니다.", str(e)),
+        ) from e
 
     if resp.status_code >= 400:
         detail: Any
@@ -242,6 +259,44 @@ def _get_profile_auth(provider: str) -> Dict[str, Any]:
     return p
 
 
+def _error_detail(category: str, code: str, user_message: str, debug_detail: Any = None) -> Dict[str, Any]:
+    return {
+        "ok": False,
+        "errorCategory": category,
+        "errorCode": code,
+        "userMessage": user_message,
+        "debugDetail": debug_detail,
+    }
+
+
+def _decision_hint(summary: Dict[str, Any]) -> str:
+    fail = int(summary.get("FAIL") or 0)
+    blocked = int(summary.get("BLOCKED") or 0)
+    if fail > 0:
+        return "hold"
+    if blocked > 0:
+        return "ship_with_caution"
+    return "ship"
+
+
+def _build_final_summary(summary: Dict[str, Any], hints: Dict[str, str] | None = None) -> Dict[str, Any]:
+    hints = hints or {}
+    blocker_items = [{"code": k, "message": v} for k, v in hints.items()][:5]
+    decision = _decision_hint(summary)
+    actions: list[str] = []
+    if summary.get("FAIL"):
+        actions.append("실패 항목을 우선 수정하고 재실행하세요.")
+    if summary.get("BLOCKED"):
+        actions.append("BLOCKED 항목의 사전 조건(권한/데이터)을 확인하세요.")
+    if not actions:
+        actions.append("경고 항목 위주로 최종 점검 후 배포하세요.")
+    return {
+        "critical_fail_count": int(summary.get("FAIL") or 0),
+        "warning_count": int(summary.get("BLOCKED") or 0),
+        "blockers_top": blocker_items,
+        "action_items": actions[:3],
+        "decision_hint": decision,
+    }
 
 
 @app.get("/")
@@ -613,12 +668,15 @@ async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": result.get("error")}
     final_sheet = write_final_testsheet(cfg["run_id"], cfg["project_name"], result.get("rows") or [])
     graph_payload = result.get("executionGraph") or result.get("graph") or build_execution_graph(result.get("rows") or [], result.get("chainStatuses") or {})
+    summary = result.get("summary") or {}
+    failure_hints = result.get("failureCodeHints") or {}
     return {
         "ok": True,
-        "summary": result.get("summary"),
+        "summary": summary,
+        "finalSummary": _build_final_summary(summary, failure_hints),
         "coverage": result.get("coverage"),
         "metrics": result.get("metrics") or {},
-        "failureCodeHints": result.get("failureCodeHints") or {},
+        "failureCodeHints": failure_hints,
         "retryStats": result.get("retryStats") or {},
         "chainStatuses": result.get("chainStatuses") or {},
         "graph": graph_payload,
@@ -648,17 +706,30 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
     batch_size = max(1, min(int(payload.get("batchSize", 8) or 8), 12))
     job_id = f"job_{uuid4().hex[:12]}"
     total_rows = len(cfg.get("rows") or [])
+    now_ms = int(time.time() * 1000)
     execute_jobs[job_id] = {
         "ok": True,
         "jobId": job_id,
         "status": "queued",
-        "createdAt": int(time.time() * 1000),
-        "progress": {"doneRows": 0, "totalRows": total_rows, "completed_rows": 0, "target_rows": total_rows, "percent": 0},
+        "createdAt": now_ms,
+        "progress": {
+            "phase": "queued",
+            "doneRows": 0,
+            "totalRows": total_rows,
+            "completed_rows": 0,
+            "target_rows": total_rows,
+            "percent": 0,
+            "elapsedMs": 0,
+            "etaMs": None,
+            "lastMessage": "실행 대기 중",
+        },
     }
 
     async def _runner() -> None:
         execute_jobs[job_id]["status"] = "running"
         execute_jobs[job_id]["startedAt"] = int(time.time() * 1000)
+        execute_jobs[job_id]["progress"]["phase"] = "execute"
+        execute_jobs[job_id]["progress"]["lastMessage"] = "체크리스트 실행 중"
         try:
             rows_all = cfg.get("rows") or []
             merged_rows: list[Dict[str, Any]] = []
@@ -721,23 +792,34 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 merged_metrics["completed_rows"] += int(part_metrics.get("completed_rows") or len(part.get("rows") or []))
                 merged_metrics["target_rows"] = int(part_metrics.get("target_rows") or merged_metrics.get("target_rows") or len(rows_all))
                 done = min(len(rows_all), int(merged_metrics.get("completed_rows") or 0))
+                elapsed_ms = int(time.time() * 1000) - int(execute_jobs[job_id].get("startedAt") or int(time.time() * 1000))
+                eta_ms = None
+                if done > 0:
+                    avg_per_row = elapsed_ms / done
+                    eta_ms = int(max(0, (len(rows_all) - done) * avg_per_row))
                 execute_jobs[job_id]["progress"] = {
+                    "phase": "execute",
                     "doneRows": done,
                     "totalRows": len(rows_all),
                     "completed_rows": done,
                     "target_rows": len(rows_all),
                     "percent": int((done / max(1, len(rows_all))) * 100),
+                    "elapsedMs": elapsed_ms,
+                    "etaMs": eta_ms,
+                    "lastMessage": f"{done}/{len(rows_all)} 행 처리 완료",
                 }
 
             final_sheet = write_final_testsheet(cfg["run_id"], cfg["project_name"], merged_rows)
             merged_retry_stats["totalRows"] = len(merged_rows)
             merged_retry_stats["retryRate"] = round(int(merged_retry_stats.get("eligibleRows", 0)) / max(1, len(merged_rows)), 3)
             graph_payload = build_execution_graph(merged_rows, merged_chain_statuses)
+            final_summary = _build_final_summary(merged_summary, merged_hints)
             execute_jobs[job_id] = {
                 **execute_jobs[job_id],
                 "ok": True,
                 "status": "done",
                 "summary": merged_summary,
+                "finalSummary": final_summary,
                 "coverage": last_cov,
                 "metrics": {"completed_rows": len(merged_rows), "target_rows": len(rows_all)},
                 "failureCodeHints": merged_hints,
@@ -748,10 +830,33 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 "rows": merged_rows,
                 "decompositionRows": merged_decomp_rows,
                 "finalSheet": final_sheet,
+                "progress": {
+                    "phase": "done",
+                    "doneRows": len(rows_all),
+                    "totalRows": len(rows_all),
+                    "completed_rows": len(rows_all),
+                    "target_rows": len(rows_all),
+                    "percent": 100,
+                    "elapsedMs": int(time.time() * 1000) - int(execute_jobs[job_id].get("startedAt") or int(time.time() * 1000)),
+                    "etaMs": 0,
+                    "lastMessage": "실행 완료",
+                },
                 "endedAt": int(time.time() * 1000),
             }
         except Exception as e:
-            execute_jobs[job_id] = {**execute_jobs[job_id], "ok": False, "status": "error", "error": str(e), "endedAt": int(time.time() * 1000)}
+            execute_jobs[job_id] = {
+                **execute_jobs[job_id],
+                "ok": False,
+                "status": "error",
+                "error": str(e),
+                "errorDetail": _error_detail("server", "EXECUTE_JOB_FAILED", "비동기 실행 중 오류가 발생했습니다.", str(e)),
+                "progress": {
+                    **(execute_jobs[job_id].get("progress") or {}),
+                    "phase": "error",
+                    "lastMessage": "실행 실패",
+                },
+                "endedAt": int(time.time() * 1000),
+            }
 
     asyncio.create_task(_runner())
     return {"ok": True, "jobId": job_id, "status": "queued", "progress": execute_jobs[job_id].get("progress")}
@@ -942,13 +1047,17 @@ async def _run_oneclick_single(base_url: str, provider: Any = None, model: str |
     if not ran.get("ok"):
         return {"ok": False, "error": ran.get("error"), "status": int(ran.get("status") or 500)}
 
+    summary = ran.get("summary") or {}
+    failure_hints = ran.get("failureCodeHints") or {}
     return {
         "ok": True,
         "analysisId": analysis_id,
         "runId": ran.get("runId"),
         "finalStatus": ran.get("finalStatus"),
-        "summary": ran.get("summary"),
+        "summary": summary,
+        "finalSummary": _build_final_summary(summary, failure_hints),
         "judge": ran.get("judge"),
+        "failureCodeHints": failure_hints,
         "reportPath": ran.get("reportPath", ""),
         "reportJson": ran.get("reportJson", ""),
         "fixSheet": ran.get("fixSheet"),

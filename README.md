@@ -15,9 +15,16 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 - `/api/analyze`
 - `/api/checklist/auto`
 - `/api/checklist/execute`
+- `/api/checklist/execute/async` + `/api/checklist/execute/status/{jobId}`
 - `/api/flow/transition-check`
 - `/api/report/finalize`
+- `/api/oneclick`
 - `/api/sheets/pull` (Phase-1 read-only prototype)
+
+## QA Hardening API additions (P1)
+- Progress schema 강화 (`progress.phase`, `percent`, `elapsedMs`, `etaMs`, `lastMessage`)
+- Final summary 제공 (`finalSummary.critical_fail_count`, `warning_count`, `blockers_top`, `action_items`, `decision_hint`)
+- Error taxonomy 표준화 (`errorCategory`, `errorCode`, `userMessage`, `debugDetail`)
 
 ## Google Sheets Phase-1 (pull-only)
 Environment variables:
