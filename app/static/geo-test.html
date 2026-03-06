@@ -120,7 +120,7 @@
         margin-top: 1rem;
         display: grid;
         gap: 0.75rem;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       }
 
       .metric {
@@ -380,6 +380,10 @@
             <div class="label">Pages crawled</div>
             <div id="page-count" class="value">-</div>
           </article>
+          <article class="metric">
+            <div class="label">Valid JSON-LD pages</div>
+            <div id="jsonld-page-count" class="value">-</div>
+          </article>
         </div>
 
         <ul id="checks" class="checks"></ul>
@@ -405,6 +409,7 @@
       const schemaCountNode = document.getElementById("schema-count");
       const recCountNode = document.getElementById("rec-count");
       const pageCountNode = document.getElementById("page-count");
+      const jsonLdPageCountNode = document.getElementById("jsonld-page-count");
       const checksNode = document.getElementById("checks");
       const verifiedSectionsNode = document.getElementById("verified-sections");
       const jsonNode = document.getElementById("json");
@@ -562,6 +567,7 @@
         schemaCountNode.textContent = "-";
         recCountNode.textContent = "-";
         pageCountNode.textContent = "-";
+        jsonLdPageCountNode.textContent = "-";
         checksNode.innerHTML = "";
         verifiedSectionsNode.innerHTML = '<p class="empty-note">Collecting verified details...</p>';
         jsonNode.textContent = "{}";
@@ -587,6 +593,8 @@
           schemaCountNode.textContent = String((data.structured_data || []).length);
           recCountNode.textContent = String((data.recommendations || []).length);
           pageCountNode.textContent = String((data.evidence?.crawled_pages || []).length);
+          jsonLdPageCountNode.textContent =
+            `${data.evidence?.json_ld_summary?.valid_pages || 0}/${data.evidence?.json_ld_summary?.total_pages || 0}`;
           renderChecks(data.checks || {});
           renderVerifiedSections(data.verified_sections || []);
           jsonNode.textContent = JSON.stringify(data, null, 2);

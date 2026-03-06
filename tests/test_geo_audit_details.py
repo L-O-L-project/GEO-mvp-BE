@@ -30,6 +30,19 @@ class GeoAuditDetailTests(unittest.IsolatedAsyncioTestCase):
           </body>
         </html>
         """
+        invalid_json_ld_html = """
+        <html>
+          <head>
+            <title>Acme Docs</title>
+            <script type="application/ld+json">
+              {"@context":"https://schema.org","@type":
+            </script>
+          </head>
+          <body>
+            <h1>Docs</h1>
+          </body>
+        </html>
+        """
         crawl_result = {
             "origin": "https://example.com",
             "target": "https://example.com",
@@ -39,6 +52,13 @@ class GeoAuditDetailTests(unittest.IsolatedAsyncioTestCase):
                     path="/",
                     depth=0,
                     html=html,
+                    status_code=200,
+                ),
+                CrawledPage(
+                    url="https://example.com/docs",
+                    path="/docs",
+                    depth=1,
+                    html=invalid_json_ld_html,
                     status_code=200,
                 )
             ],
@@ -59,18 +79,29 @@ class GeoAuditDetailTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("evidence", result)
         self.assertIn("verified_sections", result)
         self.assertEqual(result["evidence"]["origin"], "https://example.com")
-        self.assertEqual(len(result["evidence"]["crawled_pages"]), 1)
+        self.assertEqual(len(result["evidence"]["crawled_pages"]), 2)
         self.assertEqual(result["evidence"]["crawled_pages"][0]["status_code"], 200)
+        self.assertEqual(result["evidence"]["json_ld_summary"]["total_pages"], 2)
+        self.assertEqual(result["evidence"]["json_ld_summary"]["valid_pages"], 1)
+        self.assertEqual(result["evidence"]["json_ld_summary"]["invalid_pages"], 1)
 
         sections = {section["id"]: section for section in result["verified_sections"]}
         self.assertIn("files", sections)
         self.assertIn("structured", sections)
+        self.assertIn("json_ld_pages", sections)
         self.assertIn("pages", sections)
-        self.assertEqual(sections["pages"]["totalCount"], 1)
+        self.assertEqual(sections["pages"]["totalCount"], 2)
 
         structured_item = next(item for item in sections["structured"]["items"] if item["key"] == "structured_data")
         self.assertTrue(structured_item["passed"])
         self.assertIn("Organization", structured_item["value"])
+        page_json_ld_item = next(item for item in sections["structured"]["items"] if item["key"] == "json_ld_page_coverage")
+        self.assertEqual(page_json_ld_item["value"], "1/2")
+
+        json_ld_section = sections["json_ld_pages"]
+        docs_item = next(item for item in json_ld_section["items"] if item["label"] == "/docs")
+        self.assertFalse(docs_item["passed"])
+        self.assertIn("Invalid JSON-LD: parse failed", docs_item["evidence"])
 
         entity_section = sections["entities"]
         emails_item = next(item for item in entity_section["items"] if item["key"] == "emails")

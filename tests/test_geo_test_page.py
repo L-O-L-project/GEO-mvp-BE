@@ -17,6 +17,7 @@ class GeoTestPageTests(unittest.TestCase):
         self.assertIn("text/html", res.headers.get("content-type", ""))
         self.assertIn("GEO Audit Test Console", res.text)
         self.assertIn("Verified Details", res.text)
+        self.assertIn("Valid JSON-LD pages", res.text)
 
     def test_geo_audit_requires_url(self):
         res = self.client.post("/api/geo-audit", json={})
@@ -34,6 +35,24 @@ class GeoTestPageTests(unittest.TestCase):
             "evidence": {
                 "origin": "https://example.com",
                 "target": "https://example.com",
+                "json_ld_summary": {"total_pages": 1, "valid_pages": 1, "missing_pages": 0, "invalid_pages": 0},
+                "json_ld_pages": [
+                    {
+                        "url": "https://example.com",
+                        "path": "/",
+                        "depth": 0,
+                        "status_code": 200,
+                        "present": True,
+                        "applied_well": True,
+                        "block_count": 1,
+                        "valid_block_count": 1,
+                        "invalid_block_count": 0,
+                        "types": ["Organization"],
+                        "target_types": ["Organization"],
+                        "issues": [],
+                        "blocks": [],
+                    }
+                ],
                 "crawled_pages": [{"url": "https://example.com", "path": "/", "depth": 0, "status_code": 200}],
             },
             "verified_sections": [
@@ -45,6 +64,16 @@ class GeoTestPageTests(unittest.TestCase):
                     "totalCount": 1,
                     "items": [
                         {"key": "title", "label": "Page title", "passed": True, "status": "PASS", "value": "Present"}
+                    ],
+                },
+                {
+                    "id": "json_ld_pages",
+                    "label": "Page JSON-LD Coverage",
+                    "summary": "1/1 page(s) have valid JSON-LD",
+                    "passCount": 1,
+                    "totalCount": 1,
+                    "items": [
+                        {"key": "json_ld:/", "label": "/", "passed": True, "status": "PASS", "value": ["Organization"]}
                     ],
                 }
             ],

@@ -187,33 +187,117 @@ def _analyze_heading_structure(soup: BeautifulSoup) -> Dict[str, Any]:
     }
 
 
+def _extract_schema_types(payload: Any) -> list[str]:
+    detected: set[str] = set()
+    stack = [payload]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            node_type = node.get("@type")
+            if isinstance(node_type, list):
+                for item in node_type:
+                    if isinstance(item, str) and item.strip():
+                        detected.add(item.strip())
+            elif isinstance(node_type, str) and node_type.strip():
+                detected.add(node_type.strip())
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return sorted(detected)
+
+
+def _json_ld_has_context(payload: Any) -> bool:
+    stack = [payload]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            context = node.get("@context")
+            if isinstance(context, str) and context.strip():
+                return True
+            if isinstance(context, list) and any(isinstance(item, str) and item.strip() for item in context):
+                return True
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return False
+
+
+def _analyze_json_ld_blocks(soup: BeautifulSoup) -> Dict[str, Any]:
+    blocks: list[Dict[str, Any]] = []
+    page_types: set[str] = set()
+    page_target_types: set[str] = set()
+    issue_set: set[str] = set()
+
+    for index, block in enumerate(soup.find_all("script", attrs={"type": "application/ld+json"}), start=1):
+        raw = (block.string or block.get_text() or "").strip()
+        issues: list[str] = []
+        detected_types: list[str] = []
+        target_types: list[str] = []
+        has_context = False
+        parse_ok = False
+
+        if not raw:
+            issues.append("Empty JSON-LD block")
+        else:
+            try:
+                payload = json.loads(raw)
+                parse_ok = True
+            except Exception:
+                issues.append("Invalid JSON-LD: parse failed")
+            else:
+                has_context = _json_ld_has_context(payload)
+                detected_types = _extract_schema_types(payload)
+                target_types = [item for item in detected_types if item in SCHEMA_TARGETS]
+                if not has_context:
+                    issues.append("Missing @context")
+                if not detected_types:
+                    issues.append("Missing @type")
+
+        passed = parse_ok and has_context and bool(detected_types)
+        page_types.update(detected_types)
+        page_target_types.update(target_types)
+        for issue in issues:
+            issue_set.add(issue)
+        blocks.append(
+            {
+                "index": index,
+                "passed": passed,
+                "status": "PASS" if passed else "MISS",
+                "parse_ok": parse_ok,
+                "has_context": has_context,
+                "types": detected_types,
+                "target_types": target_types,
+                "issues": issues,
+            }
+        )
+
+    block_count = len(blocks)
+    valid_block_count = sum(1 for item in blocks if item.get("passed"))
+    invalid_block_count = block_count - valid_block_count
+    present = block_count > 0
+    page_issues = sorted(issue_set)
+    if not present:
+        page_issues = ["No JSON-LD blocks found"]
+
+    return {
+        "present": present,
+        "applied_well": valid_block_count > 0,
+        "block_count": block_count,
+        "valid_block_count": valid_block_count,
+        "invalid_block_count": invalid_block_count,
+        "types": sorted(page_types),
+        "target_types": sorted(page_target_types),
+        "issues": page_issues,
+        "blocks": blocks,
+    }
+
+
 def _detect_structured_data(soup: BeautifulSoup) -> list[str]:
     detected: set[str] = set()
-
-    for block in soup.find_all("script", attrs={"type": "application/ld+json"}):
-        raw = (block.string or block.get_text() or "").strip()
-        if not raw:
-            continue
-        try:
-            payload = json.loads(raw)
-        except Exception:
-            continue
-
-        stack = [payload]
-        while stack:
-            node = stack.pop()
-            if isinstance(node, dict):
-                node_type = node.get("@type")
-                if isinstance(node_type, list):
-                    for item in node_type:
-                        if isinstance(item, str) and item in SCHEMA_TARGETS:
-                            detected.add(item)
-                elif isinstance(node_type, str) and node_type in SCHEMA_TARGETS:
-                    detected.add(node_type)
-                stack.extend(node.values())
-            elif isinstance(node, list):
-                stack.extend(node)
-
+    for block in _analyze_json_ld_blocks(soup).get("blocks") or []:
+        for item in block.get("target_types") or []:
+            if isinstance(item, str) and item in SCHEMA_TARGETS:
+                detected.add(item)
     return sorted(detected)
 
 
@@ -297,6 +381,7 @@ def _score_geo(results: Dict[str, Any]) -> int:
 
 def _build_recommendations(results: Dict[str, Any]) -> list[str]:
     recs: list[str] = []
+    json_ld_summary = results.get("json_ld_summary") if isinstance(results.get("json_ld_summary"), dict) else {}
 
     if not results["file_presence"].get("llms_txt"):
         recs.append("Add llms.txt to guide AI crawlers")
@@ -310,6 +395,10 @@ def _build_recommendations(results: Dict[str, Any]) -> list[str]:
         recs.append("Improve service description clarity")
     if not results["meta"].get("meta_description"):
         recs.append("Add a descriptive meta description for better AI snippet quality")
+    if int(json_ld_summary.get("invalid_pages", 0)) > 0:
+        recs.append("Fix invalid JSON-LD blocks on affected pages")
+    elif int(json_ld_summary.get("missing_pages", 0)) > 0:
+        recs.append("Add JSON-LD to more crawled pages for better page-level schema coverage")
 
     return recs
 
@@ -347,6 +436,7 @@ def _aggregate_page_results(pages: list[CrawledPage]) -> Dict[str, Any]:
     structured_data: set[str] = set()
     faq_detected = False
     entity_candidate: Dict[str, Any] | None = None
+    json_ld_pages: list[Dict[str, Any]] = []
 
     for page in pages:
         soup = BeautifulSoup(page.html, "html.parser")
@@ -362,14 +452,23 @@ def _aggregate_page_results(pages: list[CrawledPage]) -> Dict[str, Any]:
             headings_aggregate["h2_h3_hierarchy"] and headings.get("h2_h3_hierarchy", False)
         )
 
-        structured_data.update(_detect_structured_data(soup))
+        json_ld = _analyze_json_ld_blocks(soup)
+        json_ld_pages.append(
+            {
+                "url": page.url,
+                "path": page.path,
+                "depth": page.depth,
+                "status_code": page.status_code,
+                **json_ld,
+            }
+        )
+        structured_data.update(json_ld.get("target_types") or [])
         faq_detected = bool(faq_detected or _detect_faq(soup))
 
         entities = _extract_entities(soup, page.url)
         if entities.get("entity_clarity"):
             entity_candidate = entities
-            break
-        if entity_candidate is None:
+        elif entity_candidate is None:
             entity_candidate = entities
 
     if entity_candidate is None:
@@ -392,6 +491,14 @@ def _aggregate_page_results(pages: list[CrawledPage]) -> Dict[str, Any]:
         "structured_data": sorted(structured_data),
         "faq_detected": faq_detected,
         "entities": entity_candidate,
+        "json_ld_pages": json_ld_pages,
+        "json_ld_summary": {
+            "total_pages": len(json_ld_pages),
+            "pages_with_json_ld": sum(1 for item in json_ld_pages if item.get("present")),
+            "valid_pages": sum(1 for item in json_ld_pages if item.get("applied_well")),
+            "invalid_pages": sum(1 for item in json_ld_pages if item.get("present") and not item.get("applied_well")),
+            "missing_pages": sum(1 for item in json_ld_pages if not item.get("present")),
+        },
     }
 
 
@@ -433,6 +540,8 @@ def _build_verified_sections(crawl_result: Dict[str, Any], results: Dict[str, An
     meta = results["meta"]
     headings = results["headings"]
     structured_data = results["structured_data"]
+    json_ld_pages = results.get("json_ld_pages") if isinstance(results.get("json_ld_pages"), list) else []
+    json_ld_summary = results.get("json_ld_summary") if isinstance(results.get("json_ld_summary"), dict) else {}
     entities = results["entities"] if isinstance(results.get("entities"), dict) else {}
     contact = entities.get("contact_information") if isinstance(entities.get("contact_information"), dict) else {}
     emails = contact.get("emails") if isinstance(contact.get("emails"), list) else []
@@ -479,6 +588,17 @@ def _build_verified_sections(crawl_result: Dict[str, Any], results: Dict[str, An
             evidence=f"{len(structured_data)} type(s) found",
         ),
         _audit_item(
+            "json_ld_page_coverage",
+            "Valid JSON-LD pages",
+            int(json_ld_summary.get("valid_pages", 0)) == int(json_ld_summary.get("total_pages", 0))
+            and int(json_ld_summary.get("total_pages", 0)) > 0,
+            value=f"{int(json_ld_summary.get('valid_pages', 0))}/{int(json_ld_summary.get('total_pages', 0))}",
+            evidence=(
+                f"missing {int(json_ld_summary.get('missing_pages', 0))}, "
+                f"invalid {int(json_ld_summary.get('invalid_pages', 0))}"
+            ),
+        ),
+        _audit_item(
             "faq_schema",
             "FAQPage schema",
             "FAQPage" in structured_data,
@@ -491,6 +611,28 @@ def _build_verified_sections(crawl_result: Dict[str, Any], results: Dict[str, An
             value="Detected" if results.get("faq_detected") else "Not detected",
         ),
     ]
+
+    json_ld_page_items = []
+    for page in json_ld_pages:
+        if not isinstance(page, dict):
+            continue
+        types = page.get("types") if isinstance(page.get("types"), list) else []
+        issues = page.get("issues") if isinstance(page.get("issues"), list) else []
+        evidence_bits = [
+            f"HTTP {int(page.get('status_code') or 0)}",
+            f"blocks {int(page.get('valid_block_count') or 0)}/{int(page.get('block_count') or 0)} valid",
+        ]
+        if issues:
+            evidence_bits.append("issues: " + ", ".join(str(issue) for issue in issues))
+        json_ld_page_items.append(
+            _audit_item(
+                f"json_ld:{page.get('path') or page.get('url') or ''}",
+                str(page.get("path") or page.get("url") or "/"),
+                bool(page.get("applied_well")),
+                value=types or ["None"],
+                evidence=" | ".join(evidence_bits),
+            )
+        )
 
     entity_items = [
         _audit_item(
@@ -536,6 +678,15 @@ def _build_verified_sections(crawl_result: Dict[str, Any], results: Dict[str, An
         _audit_section("meta", "Meta Tags", meta_items),
         _audit_section("headings", "Heading Structure", heading_items),
         _audit_section("structured", "Structured Data & FAQ", structured_items),
+        _audit_section(
+            "json_ld_pages",
+            "Page JSON-LD Coverage",
+            json_ld_page_items,
+            summary=(
+                f"{int(json_ld_summary.get('valid_pages', 0))}/{int(json_ld_summary.get('total_pages', 0))} "
+                "page(s) have valid JSON-LD"
+            ),
+        ),
         _audit_section("entities", "Entity Signals", entity_items),
         _audit_section(
             "pages",
@@ -592,6 +743,8 @@ async def run_geo_audit(url: str) -> Dict[str, Any]:
             "faq_detected": results["faq_detected"],
             "entities": results["entities"],
             "structured_data": results["structured_data"],
+            "json_ld_summary": results["json_ld_summary"],
+            "json_ld_pages": results["json_ld_pages"],
             "crawled_pages": pages,
         },
         "verified_sections": verified_sections,
