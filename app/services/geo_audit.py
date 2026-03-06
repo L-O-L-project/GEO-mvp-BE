@@ -395,6 +395,157 @@ def _aggregate_page_results(pages: list[CrawledPage]) -> Dict[str, Any]:
     }
 
 
+def _audit_item(
+    key: str,
+    label: str,
+    passed: bool,
+    value: Any = None,
+    evidence: str | None = None,
+) -> Dict[str, Any]:
+    item = {
+        "key": key,
+        "label": label,
+        "passed": bool(passed),
+        "status": "PASS" if passed else "MISS",
+    }
+    if value is not None:
+        item["value"] = value
+    if evidence:
+        item["evidence"] = evidence
+    return item
+
+
+def _audit_section(section_id: str, label: str, items: list[Dict[str, Any]], summary: str | None = None) -> Dict[str, Any]:
+    passed = sum(1 for item in items if item.get("passed"))
+    return {
+        "id": section_id,
+        "label": label,
+        "summary": summary or f"{passed}/{len(items)} checks passed",
+        "passCount": passed,
+        "totalCount": len(items),
+        "items": items,
+    }
+
+
+def _build_verified_sections(crawl_result: Dict[str, Any], results: Dict[str, Any]) -> list[Dict[str, Any]]:
+    origin = str(crawl_result.get("origin") or "").rstrip("/")
+    file_presence = results["file_presence"]
+    meta = results["meta"]
+    headings = results["headings"]
+    structured_data = results["structured_data"]
+    entities = results["entities"] if isinstance(results.get("entities"), dict) else {}
+    contact = entities.get("contact_information") if isinstance(entities.get("contact_information"), dict) else {}
+    emails = contact.get("emails") if isinstance(contact.get("emails"), list) else []
+    phones = contact.get("phones") if isinstance(contact.get("phones"), list) else []
+
+    file_items = [
+        _audit_item("llms_txt", "llms.txt", bool(file_presence.get("llms_txt")), value=f"{origin}/llms.txt"),
+        _audit_item("ai_txt", "ai.txt", bool(file_presence.get("ai_txt")), value=f"{origin}/ai.txt"),
+        _audit_item("robots_txt", "robots.txt", bool(file_presence.get("robots_txt")), value=f"{origin}/robots.txt"),
+        _audit_item("sitemap", "sitemap.xml", bool(file_presence.get("sitemap")), value=f"{origin}/sitemap.xml"),
+    ]
+
+    meta_items = [
+        _audit_item("title", "Page title", bool(meta.get("title")), value="Present" if meta.get("title") else "Missing"),
+        _audit_item(
+            "meta_description",
+            "Meta description",
+            bool(meta.get("meta_description")),
+            value="Present" if meta.get("meta_description") else "Missing",
+        ),
+        _audit_item("og_title", "OG title", bool(meta.get("og_title")), value="Present" if meta.get("og_title") else "Missing"),
+        _audit_item(
+            "og_description",
+            "OG description",
+            bool(meta.get("og_description")),
+            value="Present" if meta.get("og_description") else "Missing",
+        ),
+        _audit_item("og_image", "OG image", bool(meta.get("og_image")), value="Present" if meta.get("og_image") else "Missing"),
+        _audit_item("canonical", "Canonical URL", bool(meta.get("canonical")), value="Present" if meta.get("canonical") else "Missing"),
+    ]
+
+    heading_items = [
+        _audit_item("h1_present", "H1 present", bool(headings.get("h1_present"))),
+        _audit_item("h1_unique", "Single H1", bool(headings.get("h1_unique"))),
+        _audit_item("h2_h3_hierarchy", "H2/H3 hierarchy", bool(headings.get("h2_h3_hierarchy"))),
+    ]
+
+    structured_items = [
+        _audit_item(
+            "structured_data",
+            "Detected schema types",
+            bool(structured_data),
+            value=structured_data or ["None"],
+            evidence=f"{len(structured_data)} type(s) found",
+        ),
+        _audit_item(
+            "faq_schema",
+            "FAQPage schema",
+            "FAQPage" in structured_data,
+            value="FAQPage" if "FAQPage" in structured_data else "Missing",
+        ),
+        _audit_item(
+            "faq_detected",
+            "FAQ-like content",
+            bool(results.get("faq_detected")),
+            value="Detected" if results.get("faq_detected") else "Not detected",
+        ),
+    ]
+
+    entity_items = [
+        _audit_item(
+            "company_name",
+            "Company name",
+            bool(entities.get("company_name")),
+            value=entities.get("company_name") or "Not found",
+        ),
+        _audit_item(
+            "service_name",
+            "Service name",
+            bool(entities.get("service_name")),
+            value=entities.get("service_name") or "Not found",
+        ),
+        _audit_item("emails", "Contact emails", bool(emails), value=emails or ["None"]),
+        _audit_item("phones", "Contact phones", bool(phones), value=phones or ["None"]),
+        _audit_item("location", "Location", bool(entities.get("location")), value=entities.get("location") or "Not found"),
+        _audit_item(
+            "entity_clarity",
+            "Entity clarity",
+            bool(entities.get("entity_clarity")),
+            value="Clear" if entities.get("entity_clarity") else "Needs improvement",
+            evidence=str(entities.get("page_url") or ""),
+        ),
+    ]
+
+    crawled_pages = []
+    for page in crawl_result.get("pages") or []:
+        if not isinstance(page, CrawledPage):
+            continue
+        crawled_pages.append(
+            _audit_item(
+                page.path or page.url,
+                page.path or "/",
+                page.status_code < 400,
+                value=page.url,
+                evidence=f"HTTP {page.status_code} · depth {page.depth}",
+            )
+        )
+
+    return [
+        _audit_section("files", "File Presence", file_items),
+        _audit_section("meta", "Meta Tags", meta_items),
+        _audit_section("headings", "Heading Structure", heading_items),
+        _audit_section("structured", "Structured Data & FAQ", structured_items),
+        _audit_section("entities", "Entity Signals", entity_items),
+        _audit_section(
+            "pages",
+            "Crawled Pages",
+            crawled_pages,
+            summary=f"{len(crawled_pages)} page(s) crawled from the target URL",
+        ),
+    ]
+
+
 async def run_geo_audit(url: str) -> Dict[str, Any]:
     crawl_result = await _crawl_site(url)
 
@@ -412,6 +563,19 @@ async def run_geo_audit(url: str) -> Dict[str, Any]:
         "faq_detected": results["faq_detected"],
         "structured_data": results["structured_data"],
     }
+    pages = []
+    for page in crawl_result.get("pages") or []:
+        if not isinstance(page, CrawledPage):
+            continue
+        pages.append(
+            {
+                "url": page.url,
+                "path": page.path,
+                "depth": page.depth,
+                "status_code": page.status_code,
+            }
+        )
+    verified_sections = _build_verified_sections(crawl_result, results)
 
     return {
         "url": crawl_result["target"],
@@ -419,4 +583,16 @@ async def run_geo_audit(url: str) -> Dict[str, Any]:
         "checks": checks,
         "structured_data": results["structured_data"],
         "recommendations": _build_recommendations(results),
+        "evidence": {
+            "origin": crawl_result["origin"],
+            "target": crawl_result["target"],
+            "file_presence": results["file_presence"],
+            "meta": results["meta"],
+            "headings": results["headings"],
+            "faq_detected": results["faq_detected"],
+            "entities": results["entities"],
+            "structured_data": results["structured_data"],
+            "crawled_pages": pages,
+        },
+        "verified_sections": verified_sections,
     }

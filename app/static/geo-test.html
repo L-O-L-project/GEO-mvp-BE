@@ -120,7 +120,7 @@
         margin-top: 1rem;
         display: grid;
         gap: 0.75rem;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
       }
 
       .metric {
@@ -150,13 +150,144 @@
       }
 
       .checks li {
-        display: flex;
-        justify-content: space-between;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
         gap: 1rem;
         padding: 0.5rem 0.62rem;
         border: 1px solid var(--line);
         border-radius: 0.6rem;
         background: #fff;
+      }
+
+      .check-copy {
+        display: grid;
+        gap: 0.16rem;
+      }
+
+      .check-label {
+        font-weight: 600;
+      }
+
+      .check-detail {
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+
+      .detail-panel {
+        margin-top: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 0.9rem;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        padding: 0.9rem;
+      }
+
+      .section-head h2 {
+        margin: 0;
+        font-size: 1rem;
+      }
+
+      .section-head p {
+        margin: 0.25rem 0 0 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .verified-sections {
+        margin-top: 0.85rem;
+        display: grid;
+        gap: 0.65rem;
+      }
+
+      .verified-block {
+        border: 1px solid var(--line);
+        border-radius: 0.8rem;
+        background: #fff;
+        overflow: hidden;
+      }
+
+      .verified-summary {
+        list-style: none;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 1rem;
+        align-items: center;
+        cursor: pointer;
+        padding: 0.82rem 0.9rem;
+        background: linear-gradient(180deg, #ffffff 0%, #f5f9ff 100%);
+      }
+
+      .verified-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .verified-summary-main {
+        display: grid;
+        gap: 0.2rem;
+      }
+
+      .verified-summary-label {
+        font-weight: 700;
+      }
+
+      .verified-summary-copy {
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+
+      .verified-meta {
+        white-space: nowrap;
+        font-size: 0.78rem;
+        padding: 0.16rem 0.5rem;
+        border-radius: 999px;
+        font-weight: 700;
+        color: var(--accent);
+        background: #e8f0ff;
+      }
+
+      .verified-list {
+        margin: 0;
+        padding: 0.2rem 0.9rem 0.9rem 0.9rem;
+        list-style: none;
+        display: grid;
+        gap: 0.45rem;
+      }
+
+      .verified-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.75rem;
+        align-items: start;
+        border: 1px solid var(--line);
+        border-radius: 0.7rem;
+        background: var(--panel-2);
+        padding: 0.62rem 0.7rem;
+      }
+
+      .verified-item-copy {
+        display: grid;
+        gap: 0.18rem;
+      }
+
+      .verified-item-label {
+        font-weight: 600;
+      }
+
+      .verified-item-value {
+        color: var(--ink);
+        font-size: 0.9rem;
+        word-break: break-word;
+      }
+
+      .verified-item-evidence {
+        color: var(--muted);
+        font-size: 0.8rem;
+        word-break: break-word;
+      }
+
+      .empty-note {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
       }
 
       .tag {
@@ -245,9 +376,22 @@
             <div class="label">Recommendation count</div>
             <div id="rec-count" class="value">-</div>
           </article>
+          <article class="metric">
+            <div class="label">Pages crawled</div>
+            <div id="page-count" class="value">-</div>
+          </article>
         </div>
 
         <ul id="checks" class="checks"></ul>
+        <section class="detail-panel">
+          <div class="section-head">
+            <h2>Verified Details</h2>
+            <p>Open each dropdown to inspect what the crawler actually verified.</p>
+          </div>
+          <div id="verified-sections" class="verified-sections">
+            <p class="empty-note">Run a GEO test to inspect verified details.</p>
+          </div>
+        </section>
         <pre id="json" class="json">{}</pre>
       </section>
     </main>
@@ -260,7 +404,9 @@
       const scoreNode = document.getElementById("score");
       const schemaCountNode = document.getElementById("schema-count");
       const recCountNode = document.getElementById("rec-count");
+      const pageCountNode = document.getElementById("page-count");
       const checksNode = document.getElementById("checks");
+      const verifiedSectionsNode = document.getElementById("verified-sections");
       const jsonNode = document.getElementById("json");
 
       function scoreClass(score) {
@@ -269,20 +415,138 @@
         return "score-bad";
       }
 
+      function prettyKey(key) {
+        return String(key || "")
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (char) => char.toUpperCase());
+      }
+
+      function formatValue(value) {
+        if (Array.isArray(value)) {
+          return value.length ? value.join(", ") : "None";
+        }
+        if (value && typeof value === "object") {
+          return JSON.stringify(value);
+        }
+        if (value === null || value === undefined || value === "") {
+          return "None";
+        }
+        return String(value);
+      }
+
+      function checkStatus(value) {
+        if (Array.isArray(value)) {
+          return value.length > 0;
+        }
+        return Boolean(value);
+      }
+
       function renderChecks(checks) {
         checksNode.innerHTML = "";
         const entries = Object.entries(checks || {});
         if (!entries.length) return;
         entries.forEach(([key, value]) => {
           const item = document.createElement("li");
-          const left = document.createElement("span");
-          left.textContent = key;
+          const left = document.createElement("div");
+          left.className = "check-copy";
+          const label = document.createElement("span");
+          label.className = "check-label";
+          label.textContent = prettyKey(key);
+          const detail = document.createElement("span");
+          detail.className = "check-detail";
+          detail.textContent = formatValue(value);
           const right = document.createElement("span");
-          right.className = "tag " + (value ? "ok" : "no");
-          right.textContent = value ? "PASS" : "MISS";
+          const passed = checkStatus(value);
+          right.className = "tag " + (passed ? "ok" : "no");
+          right.textContent = passed ? "PASS" : "MISS";
+          left.appendChild(label);
+          left.appendChild(detail);
           item.appendChild(left);
           item.appendChild(right);
           checksNode.appendChild(item);
+        });
+      }
+
+      function renderVerifiedSections(sections) {
+        verifiedSectionsNode.innerHTML = "";
+
+        if (!Array.isArray(sections) || !sections.length) {
+          const note = document.createElement("p");
+          note.className = "empty-note";
+          note.textContent = "No verified details were returned.";
+          verifiedSectionsNode.appendChild(note);
+          return;
+        }
+
+        sections.forEach((section, index) => {
+          const details = document.createElement("details");
+          details.className = "verified-block";
+          details.open = index === 0;
+
+          const summary = document.createElement("summary");
+          summary.className = "verified-summary";
+
+          const summaryMain = document.createElement("div");
+          summaryMain.className = "verified-summary-main";
+
+          const summaryLabel = document.createElement("span");
+          summaryLabel.className = "verified-summary-label";
+          summaryLabel.textContent = section.label || "Verified Section";
+
+          const summaryCopy = document.createElement("span");
+          summaryCopy.className = "verified-summary-copy";
+          summaryCopy.textContent = section.summary || "";
+
+          const summaryMeta = document.createElement("span");
+          summaryMeta.className = "verified-meta";
+          summaryMeta.textContent = `${section.passCount || 0}/${section.totalCount || 0}`;
+
+          summaryMain.appendChild(summaryLabel);
+          summaryMain.appendChild(summaryCopy);
+          summary.appendChild(summaryMain);
+          summary.appendChild(summaryMeta);
+          details.appendChild(summary);
+
+          const list = document.createElement("ul");
+          list.className = "verified-list";
+
+          (section.items || []).forEach((entry) => {
+            const listItem = document.createElement("li");
+            listItem.className = "verified-item";
+
+            const copy = document.createElement("div");
+            copy.className = "verified-item-copy";
+
+            const label = document.createElement("span");
+            label.className = "verified-item-label";
+            label.textContent = entry.label || entry.key || "Detail";
+
+            const value = document.createElement("span");
+            value.className = "verified-item-value";
+            value.textContent = formatValue(entry.value);
+
+            copy.appendChild(label);
+            copy.appendChild(value);
+
+            if (entry.evidence) {
+              const evidence = document.createElement("span");
+              evidence.className = "verified-item-evidence";
+              evidence.textContent = String(entry.evidence);
+              copy.appendChild(evidence);
+            }
+
+            const tag = document.createElement("span");
+            const passed = Boolean(entry.passed);
+            tag.className = "tag " + (passed ? "ok" : "no");
+            tag.textContent = entry.status || (passed ? "PASS" : "MISS");
+
+            listItem.appendChild(copy);
+            listItem.appendChild(tag);
+            list.appendChild(listItem);
+          });
+
+          details.appendChild(list);
+          verifiedSectionsNode.appendChild(details);
         });
       }
 
@@ -297,7 +561,9 @@
         scoreNode.className = "value";
         schemaCountNode.textContent = "-";
         recCountNode.textContent = "-";
+        pageCountNode.textContent = "-";
         checksNode.innerHTML = "";
+        verifiedSectionsNode.innerHTML = '<p class="empty-note">Collecting verified details...</p>';
         jsonNode.textContent = "{}";
 
         try {
@@ -320,11 +586,14 @@
           scoreNode.className = "value " + scoreClass(score);
           schemaCountNode.textContent = String((data.structured_data || []).length);
           recCountNode.textContent = String((data.recommendations || []).length);
+          pageCountNode.textContent = String((data.evidence?.crawled_pages || []).length);
           renderChecks(data.checks || {});
+          renderVerifiedSections(data.verified_sections || []);
           jsonNode.textContent = JSON.stringify(data, null, 2);
           statusNode.textContent = "Completed";
         } catch (error) {
           statusNode.textContent = "Request failed";
+          renderVerifiedSections([]);
           jsonNode.textContent = JSON.stringify({ error: String(error) }, null, 2);
         } finally {
           submitButton.disabled = false;

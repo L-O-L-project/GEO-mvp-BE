@@ -16,6 +16,7 @@ class GeoTestPageTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn("text/html", res.headers.get("content-type", ""))
         self.assertIn("GEO Audit Test Console", res.text)
+        self.assertIn("Verified Details", res.text)
 
     def test_geo_audit_requires_url(self):
         res = self.client.post("/api/geo-audit", json={})
@@ -30,6 +31,23 @@ class GeoTestPageTests(unittest.TestCase):
             "checks": {"title": True},
             "structured_data": ["Organization"],
             "recommendations": [],
+            "evidence": {
+                "origin": "https://example.com",
+                "target": "https://example.com",
+                "crawled_pages": [{"url": "https://example.com", "path": "/", "depth": 0, "status_code": 200}],
+            },
+            "verified_sections": [
+                {
+                    "id": "meta",
+                    "label": "Meta Tags",
+                    "summary": "1/1 checks passed",
+                    "passCount": 1,
+                    "totalCount": 1,
+                    "items": [
+                        {"key": "title", "label": "Page title", "passed": True, "status": "PASS", "value": "Present"}
+                    ],
+                }
+            ],
         }
         with patch("app.main.run_geo_audit", AsyncMock(return_value=fake_result)) as mocked:
             res = self.client.post("/api/geo-audit", json={"url": "https://example.com"})
