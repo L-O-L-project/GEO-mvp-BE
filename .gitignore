@@ -1,0 +1,35 @@
+# Python cache/bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Runtime outputs
+out/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
