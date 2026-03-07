@@ -1,7 +1,7 @@
 # GEO Scope Audit (2026-03-07)
 
 목표: `GEO 테스트 프로그램`만 남기기 위해 QA 혼합 기능 제거 범위를 확정한다.
-상태: 2026-03-07 기준 1차 삭제/리팩토링 적용 완료 (analyze/llm 보류 유지)
+상태: 2026-03-07 기준 최종 점검 완료 (GEO 전용 정리 완료, analyze/llm 보류 유지)
 
 ## 1) 유지(Keep) 대상
 
@@ -109,6 +109,8 @@
 - `requirements.txt`에서 GEO 무관 패키지 제거 반영
 - `app/services/analyze.py`, `app/services/llm.py`는 GEO 고도화 용도로 유지
 - `POST /api/geo-discovery` 추가로 analyze/llm 재사용 경로 연결
+- `.githooks/pre-push` 제거 반영
+- `.gitignore` 추가 및 런타임 산출물(`__pycache__`, `*.pyc`, `out/`) 추적 제거 반영
 
 ## 2.2) GEO 고도화 (optiflow.kr/geo 기준 반영)
 
@@ -125,9 +127,24 @@
   - `https://optiflow.kr/geo` 기준 GEO audit 점수 92점(로컬 검증)
   - JSON-LD 10/10 유효, 추천사항 없음
 
-## 3) 삭제 전 최종 확인 체크
+## 2.3) 삭제 후보 최종 점검 (2026-03-07)
+
+- A. QA API 엔드포인트: 완료
+  - 현재 API는 `GET /`, `GET /health`, `GET /geo-test`, `POST /api/geo-audit`, `POST /api/geo-discovery`만 유지
+- B. QA 서비스 모듈: 완료
+  - 현재 `app/services`는 `geo_audit.py`, `analyze.py`, `llm.py`만 유지
+- C. QA 테스트 코드: 완료
+  - 현재 GEO 테스트 3개만 유지 (`test_geo_test_page.py`, `test_geo_audit_details.py`, `test_geo_discovery_api.py`)
+- D. QA 문서/운영 스크립트: 완료
+  - 구 QA 문서/스크립트 제거
+  - `.githooks/*` 제거
+- E. 중복 서브프로젝트 `geo-audit-be/`: 완료
+- F. 의존성 정리: 완료
+  - `requirements.txt`에 GEO 무관 패키지 미포함
+
+## 3) 최종 확인 체크
 
 - `app/main.py`에서 QA 라우트 제거 후에도 `GET /`, `GET /health`, `GET /geo-test`, `POST /api/geo-audit` 정상 동작
-- `tests/test_geo_test_page.py`, `tests/test_geo_audit_details.py` 통과
-- README/API 문서가 GEO 기준으로 갱신됨
+- `tests/test_geo_test_page.py`, `tests/test_geo_audit_details.py`, `tests/test_geo_discovery_api.py` 통과
+- README 및 GEO 인수인계 문서가 최신화됨
 - `requirements.txt` 최소 의존성으로 재잠금/재검증
