@@ -78,7 +78,7 @@ class GeoTestPageTests(unittest.TestCase):
                 }
             ],
         }
-        with patch("app.main.run_geo_audit", AsyncMock(return_value=fake_result)) as mocked:
+        with patch("app.routers.geo.run_geo_audit", AsyncMock(return_value=fake_result)) as mocked:
             res = self.client.post("/api/geo-audit", json={"url": "https://example.com"})
             self.assertEqual(res.status_code, 200)
             self.assertEqual(res.json(), fake_result)

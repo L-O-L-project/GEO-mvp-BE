@@ -1,6 +1,6 @@
-# qa-mvp-BE
+# geo-mvp-BE
 
-Backend repo for QA MVP (FastAPI).
+FastAPI backend for GEO audit testing.
 
 ## Run
 ```bash
@@ -11,41 +11,13 @@ playwright install chromium
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-## Main endpoints
-- `/geo-test` (web test page)
-- `/api/geo-audit`
-- `/api/analyze`
-- `/api/checklist/auto`
-- `/api/checklist/execute`
-- `/api/checklist/execute/async` + `/api/checklist/execute/status/{jobId}`
-- `/api/flow/transition-check`
-- `/api/report/finalize`
-- `/api/oneclick`
-- `/api/sheets/pull` (Phase-1 read-only prototype)
+## Endpoints
+- `GET /` service info
+- `GET /health` health check
+- `GET /geo-test` GEO web test page
+- `POST /api/geo-audit` run GEO audit
 
-## QA Hardening API additions (P1)
-- Progress schema 강화 (`progress.phase`, `percent`, `elapsedMs`, `etaMs`, `lastMessage`)
-- Final summary 제공 (`finalSummary.critical_fail_count`, `warning_count`, `blockers_top`, `action_items`, `decision_hint`)
-- Error taxonomy 표준화 (`errorCategory`, `errorCode`, `userMessage`, `debugDetail`)
-
-## Google Sheets Phase-1 (pull-only)
-Environment variables:
-- `QA_SHEETS_SPREADSHEET_ID` (required)
-- `QA_SHEETS_AUTH_MODE` (`service_account` or `oauth`)
-- `QA_SHEETS_SERVICE_ACCOUNT_JSON` (required for `service_account`, file path)
-- `QA_SHEETS_OAUTH_ACCESS_TOKEN` (required for `oauth`, placeholder mode)
-
-Notes:
-- Endpoint only reads from `checklist`, `execution`, `fix_sheet`
-- Validation errors are returned in response and logged
-- Audit log is written to `out/google_sheets_audit.jsonl`
-- Writes are intentionally disabled in Phase-1
-
-See `docs/API_SPEC.md`.
-
-OAuth setup: `docs/OAUTH_SETUP.md`
-
-## Backend full smoke
-```bash
-FASTAPI_BASE=http://127.0.0.1:8000 bash ./scripts/ops_split_check.sh
-```
+## GEO enhancement reserve
+The following modules are intentionally kept for future GEO enhancement:
+- `app/services/analyze.py`
+- `app/services/llm.py`
