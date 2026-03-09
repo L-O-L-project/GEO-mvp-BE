@@ -1,3 +1,17 @@
+---
+title: GEO Audit Demo
+emoji: 🌐
+colorFrom: blue
+colorTo: cyan
+sdk: docker
+app_port: 7860
+base_path: /geo-test
+fullWidth: true
+header: mini
+short_description: Public GEO audit test page backed by FastAPI APIs.
+pinned: false
+---
+
 # geo-mvp-BE
 
 GEO 전용 FastAPI 백엔드입니다.
@@ -48,6 +62,12 @@ curl -sS -X POST http://127.0.0.1:8000/api/geo-discovery \
 - `QA_WEB_ORIGIN`: CORS 허용 origin (`*` 기본)
 - `QA_HTTP_VERIFY_TLS`: 크롤링 시 TLS 검증 여부 (`false` 기본)
 - `QA_GEO_DYNAMIC`: Playwright 동적 링크 수집 사용 여부 (`false` 기본)
+- `QA_ANALYZE_DYNAMIC`: discovery 동적 링크 수집 사용 여부 (`true` 기본)
+
+## 무료 배포
+- 공개 테스트 페이지 + API 데모는 Hugging Face Docker Spaces가 가장 간단합니다.
+- 배포 파일은 `Dockerfile`, `.dockerignore`가 포함되어 있습니다.
+- 절차는 [Hugging Face Spaces Deploy](docs/HUGGINGFACE_SPACES_DEPLOY.md) 참고
 
 ## 참고 문서
 - [GEO Scope Audit](docs/GEO_SCOPE_AUDIT_2026-03-07.md)
